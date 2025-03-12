@@ -1,5 +1,7 @@
 package com.example.bluetoothapp.compose
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -26,6 +29,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -35,9 +39,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,9 +56,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.bluetoothapp.data.CrashAlert
 import com.example.bluetoothapp.data.CrashSeverity
@@ -88,7 +96,12 @@ fun CrashAlertsScreen(
                     crashAlerts = crashAlerts,
                     onCrashAlertClick = { selectedCrashAlert = it },
                     onAcknowledge = { viewModel.acknowledgeCrashAlert(it.id) },
-                    onDelete = { viewModel.deleteCrashAlert(it.id) }
+                    onDelete = { viewModel.deleteCrashAlert(it.id) },
+                    onAttended = { viewModel.markAsAttended(it.id) },
+                    onUnattended = { viewModel.markAsUnattended(it.id) },
+                    onOpenLocation = { alert ->
+                        viewModel.getLocationUri(alert.latitude, alert.longitude)
+                    }
                 )
             }
         }
@@ -133,6 +146,17 @@ fun CrashAlertsScreen(
             onAcknowledge = {
                 viewModel.acknowledgeCrashAlert(alert.id)
                 selectedCrashAlert = null
+            },
+            onAttended = {
+                viewModel.markAsAttended(alert.id)
+                selectedCrashAlert = null
+            },
+            onUnattended = {
+                viewModel.markAsUnattended(alert.id)
+                selectedCrashAlert = null
+            },
+            onOpenLocation = {
+                viewModel.getLocationUri(alert.latitude, alert.longitude)
             }
         )
     }
@@ -200,7 +224,10 @@ fun CrashAlertsList(
     crashAlerts: List<CrashAlert>,
     onCrashAlertClick: (CrashAlert) -> Unit,
     onAcknowledge: (CrashAlert) -> Unit,
-    onDelete: (CrashAlert) -> Unit
+    onDelete: (CrashAlert) -> Unit,
+    onAttended: (CrashAlert) -> Unit,
+    onUnattended: (CrashAlert) -> Unit,
+    onOpenLocation: (CrashAlert) -> String
 ) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -210,7 +237,10 @@ fun CrashAlertsList(
                 crashAlert = alert,
                 onClick = { onCrashAlertClick(alert) },
                 onAcknowledge = { onAcknowledge(alert) },
-                onDelete = { onDelete(alert) }
+                onDelete = { onDelete(alert) },
+                onAttended = { onAttended(alert) },
+                onUnattended = { onUnattended(alert) },
+                onOpenLocation = { onOpenLocation(alert) }
             )
         }
     }
@@ -222,10 +252,14 @@ fun CrashAlertItem(
     crashAlert: CrashAlert,
     onClick: () -> Unit,
     onAcknowledge: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onAttended: () -> Unit,
+    onUnattended: () -> Unit,
+    onOpenLocation: () -> String
 ) {
+    val context = LocalContext.current
     val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm:ss", Locale.getDefault())
-    val formattedDate = dateFormat.format(crashAlert.timestamp)
+    val formattedDate = dateFormat.format(crashAlert.receivedTime)
     
     val (backgroundColor, borderColor) = when (crashAlert.severity) {
         CrashSeverity.LOW -> Pair(Color(0xFFE3F2FD), Color(0xFF2196F3))
@@ -255,95 +289,179 @@ fun CrashAlertItem(
         ),
         shape = RoundedCornerShape(8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth()
         ) {
-            // Severity icon
-            Box(
+            Row(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(accentColor.copy(alpha = 0.1f))
-                    .border(1.dp, accentColor, CircleShape),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = accentColor,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 16.dp)
-            ) {
-                Text(
-                    text = crashAlert.deviceName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                
-                // Crash type with severity
-                Text(
-                    text = crashAlert.crashType.ifEmpty {
-                        "${
-                            when (crashAlert.severity) {
-                                CrashSeverity.LOW -> "Minor"
-                                CrashSeverity.MEDIUM -> "Moderate"
-                                CrashSeverity.HIGH -> "Severe"
-                                CrashSeverity.CRITICAL -> "Critical"
-                            }
-                        } crash" + if (crashAlert.accelerationValue > 0) " (${crashAlert.accelerationValue}g)" else ""
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = accentColor,
-                    maxLines = 1
-                )
-                
-                // Location
-                if (crashAlert.location.isNotEmpty() && crashAlert.location != "Unknown Location") {
-                    Text(
-                        text = "📍 ${crashAlert.location}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
+                // Severity icon
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = 0.1f))
+                        .border(1.dp, accentColor, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
                 
-                // Timestamp from M5Stick or local timestamp
-                Text(
-                    text = if (crashAlert.timestamp.isNotEmpty()) crashAlert.timestamp else formattedDate,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            
-            // Action buttons
-            Column(
-                horizontalAlignment = Alignment.End
-            ) {
-                if (!crashAlert.isAcknowledged) {
-                    IconButton(onClick = onAcknowledge) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 16.dp)
+                ) {
+                    Text(
+                        text = crashAlert.deviceName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    // Crash type with severity
+                    Text(
+                        text = crashAlert.crashType.ifEmpty {
+                            "${
+                                when (crashAlert.severity) {
+                                    CrashSeverity.LOW -> "Minor"
+                                    CrashSeverity.MEDIUM -> "Moderate"
+                                    CrashSeverity.HIGH -> "Severe"
+                                    CrashSeverity.CRITICAL -> "Critical"
+                                }
+                            } crash" + if (crashAlert.accelerationValue > 0) " (${crashAlert.accelerationValue}g)" else ""
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = accentColor,
+                        maxLines = 1
+                    )
+                    
+                    // Location
+                    if (crashAlert.location.isNotEmpty() && crashAlert.location != "Unknown Location") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable {
+                                val locationUri = onOpenLocation()
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(locationUri))
+                                if (intent.resolveActivity(context.packageManager) != null) {
+                                    context.startActivity(intent)
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LocationOn,
+                                contentDescription = "Location",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = crashAlert.location,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                modifier = Modifier.padding(start = 4.dp)
+                            )
+                        }
+                    }
+                    
+                    // Timestamp from M5Stick or local timestamp
+                    Text(
+                        text = if (crashAlert.timestamp.isNotEmpty()) crashAlert.timestamp else formattedDate,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                
+                // Action buttons
+                Column(
+                    horizontalAlignment = Alignment.End
+                ) {
+                    if (!crashAlert.isAcknowledged) {
+                        IconButton(onClick = onAcknowledge) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Acknowledge",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    
+                    IconButton(onClick = onDelete) {
                         Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Acknowledge",
-                            tint = MaterialTheme.colorScheme.primary
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete",
+                            tint = MaterialTheme.colorScheme.error
                         )
                     }
                 }
+            }
+            
+            // Attendance status row
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+            
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Attendance status:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.error
-                    )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onAttended,
+                        enabled = !crashAlert.isAttended,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (crashAlert.isAttended) 
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) 
+                                else Color.Transparent
+                        ),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text(
+                            text = "Attended",
+                            fontSize = 12.sp,
+                            color = if (crashAlert.isAttended) 
+                                MaterialTheme.colorScheme.primary 
+                                else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    
+                    OutlinedButton(
+                        onClick = onUnattended,
+                        enabled = crashAlert.isAttended,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (!crashAlert.isAttended) 
+                                MaterialTheme.colorScheme.error.copy(alpha = 0.1f) 
+                                else Color.Transparent
+                        ),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Text(
+                            text = "Not Attended",
+                            fontSize = 12.sp,
+                            color = if (!crashAlert.isAttended) 
+                                MaterialTheme.colorScheme.error 
+                                else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
         }
@@ -354,10 +472,14 @@ fun CrashAlertItem(
 fun CrashAlertDetailsDialog(
     crashAlert: CrashAlert,
     onDismiss: () -> Unit,
-    onAcknowledge: () -> Unit
+    onAcknowledge: () -> Unit,
+    onAttended: () -> Unit,
+    onUnattended: () -> Unit,
+    onOpenLocation: () -> String
 ) {
+    val context = LocalContext.current
     val dateFormat = SimpleDateFormat("MMM dd, yyyy HH:mm:ss", Locale.getDefault())
-    val formattedDate = dateFormat.format(crashAlert.timestamp)
+    val formattedDate = dateFormat.format(crashAlert.receivedTime)
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -459,7 +581,41 @@ fun CrashAlertDetailsDialog(
                             text = "Location: ",
                             fontWeight = FontWeight.Bold
                         )
-                        Text(text = crashAlert.location)
+                        Text(
+                            text = crashAlert.location,
+                            modifier = Modifier.clickable {
+                                val locationUri = onOpenLocation()
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(locationUri))
+                                if (intent.resolveActivity(context.packageManager) != null) {
+                                    context.startActivity(intent)
+                                }
+                            },
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                
+                // Location coordinates if available
+                if (crashAlert.latitude != 0.0 && crashAlert.longitude != 0.0) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Coordinates: ",
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${crashAlert.latitude}, ${crashAlert.longitude}",
+                            modifier = Modifier.clickable {
+                                val locationUri = onOpenLocation()
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(locationUri))
+                                if (intent.resolveActivity(context.packageManager) != null) {
+                                    context.startActivity(intent)
+                                }
+                            },
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
                 
@@ -489,36 +645,77 @@ fun CrashAlertDetailsDialog(
                     Text(text = formattedDate)
                 }
                 
-                androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 
-                Text(
-                    text = "Status: ${if (crashAlert.isAcknowledged) "Acknowledged" else "Unacknowledged"}",
-                    fontWeight = FontWeight.Bold,
-                    color = if (crashAlert.isAcknowledged) MaterialTheme.colorScheme.primary else Color.Red
-                )
+                // Alert Status section
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "Alert Status: ",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (crashAlert.isAcknowledged) "Acknowledged" else "Unacknowledged",
+                        color = if (crashAlert.isAcknowledged) 
+                            MaterialTheme.colorScheme.primary 
+                            else Color.Red
+                    )
+                }
+                
+                // Attendance Status section
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "Attendance: ",
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (crashAlert.isAttended) "Attended" else "Not Attended",
+                        color = if (crashAlert.isAttended) 
+                            MaterialTheme.colorScheme.primary 
+                            else MaterialTheme.colorScheme.error
+                    )
+                }
             }
         },
         confirmButton = {
-            if (!crashAlert.isAcknowledged) {
-                Button(
-                    onClick = onAcknowledge,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text("Acknowledge")
+            Row {
+                if (!crashAlert.isAcknowledged) {
+                    Button(
+                        onClick = onAcknowledge,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        Text("Acknowledge")
+                    }
                 }
-            } else {
-                TextButton(onClick = onDismiss) {
-                    Text("Close")
+                
+                if (crashAlert.isAttended) {
+                    OutlinedButton(onClick = onUnattended) {
+                        Text("Mark Not Attended")
+                    }
+                } else {
+                    Button(
+                        onClick = onAttended,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    ) {
+                        Text("Mark Attended")
+                    }
                 }
             }
         },
         dismissButton = {
-            if (!crashAlert.isAcknowledged) {
-                TextButton(onClick = onDismiss) {
-                    Text("Close")
-                }
+            TextButton(onClick = onDismiss) {
+                Text("Close")
             }
         }
     )
